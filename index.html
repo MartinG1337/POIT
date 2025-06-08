@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <!-- Nastavenie znakového kódovania pre správne zobrazovanie znakov ako °C -->
+    <meta charset="UTF-8">
+
+    <!-- Názov záložky v prehliadači -->
+    <title>IoT Monitoring System</title>
+
+    <!-- Načítanie knižnice Chart.js pre kreslenie dynamických grafov -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Načítanie knižnice Gauge.js pre vizuálne merače (teplota, vlhkosť) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gauge.js/1.3.7/gauge.min.js"></script>
+</head>
+<body>
+
+    <!-- Hlavný nadpis aplikácie -->
+    <h1>IoT Monitoring Web App</h1>
+
+    <!-- --- Systémové ovládanie: otvorenie spojenia, štart, stop, zatvorenie --- -->
+    <form method="POST" action="/open"><button type="submit">Open</button></form>
+    <form method="POST" action="/start"><button type="submit">Start</button></form>
+    <form method="POST" action="/stop"><button type="submit">Stop</button></form>
+    <form method="POST" action="/close"><button type="submit">Close</button></form>
+
+    <!-- --- Formulár pre nastavenie prahovej teploty a intervalu merania --- -->
+    <h2>Set Monitoring Parameters</h2>
+    <form method="POST" action="/set_parameters">
+        Threshold (temperature °C): <input type="number" step="any" name="threshold" required>
+        Interval (seconds): <input type="number" step="any" name="interval" required>
+        <button type="submit">Set</button>
+    </form>
+
+    <!-- --- Zobrazenie aktuálne nastavených parametrov --- -->
+    <h3>Current Parameters</h3>
+    <ul>
+        <li>Threshold: {{ params.get('threshold', 'N/A') }}</li>
+        <li>Interval: {{ params.get('interval', 'N/A') }}</li>
+    </ul>
+
+    <!-- --- Tabuľka s poslednými meraniami --- -->
+    <h2>Recent Data</h2>
+    <table border="1">
+        <tr><th>#</th><th>Temperature (°C)</th><th>Humidity (%)</th></tr>
+        {% for val in data %}
+        <tr><td>{{ loop.index }}</td><td>{{ val[0] }}</td><td>{{ val[1] }}</td></tr>
+        {% endfor %}
+    </table>
+
+    <!-- --- Graf s priebehom teploty a vlhkosti v čase --- -->
+    <h2>Live Temperature & Humidity Chart</h2>
+    <canvas id="dataChart" width="800" height="300"></canvas>
+
+    <!-- --- Vizualizácia pomocou analógových meračov --- -->
+    <h2>Live Gauges</h2>
+    <div style="display: flex; gap: 40px;">
+        <!-- Merač teploty -->
+        <div>
+            <h3>Temperature (°C)</h3>
+            <canvas id="tempGauge" width="300" height="150" style="border:1px solid #ccc;"></canvas>
+        </div>
+
+        <!-- Merač vlhkosti -->
+        <div>
+            <h3>Humidity (%)</h3>
+            <canvas id="humGauge" width="300" height="150" style="border:1px solid #ccc;"></canvas>
+        </div>
+    </div>
+
+    <!-- --- JavaScript kód pre aktualizáciu grafu a meračov --- -->
+    <script>
+        // --- Nastavenie grafu pomocou Chart.js ---
+        const ctx = document.getElementById('dataChart').getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'line', // typ grafu: čiarový
+            data: {
+                labels: [], // osi X – indexy meraní
+                datasets: [
+                    {
+                        label: 'Temperature (°C)',
+                        data: [],
+                        borderColor: 'red',  // červená čiara pre teplotu
+                        fill: false,
+                        tension: 0.1
+                    },
+                    {
+                        label: 'Humidity (%)',
+                        data: [],
+                        borderColor: 'blue', // modrá čiara pre vlhkosť
+                        fill: false,
+                        tension: 0.1
+                    }
+                ]
+            },
+            options: {
+                scales: {
+                    y: {
+                        beginAtZero: false  // nezačína od nuly, použije aktuálne minimum
+                    }
+                }
+            }
+        });
+
+        // --- Funkcia pre načítanie dát a aktualizáciu grafu ---
+        function updateChart() {
+            fetch('/data') // požiadavka na Flask route, ktorá vráti pole meraní
+                .then(response => response.json())
+                .then(data => {
+                    const labels = data.map((_, i) => i + 1); // číslovanie osí X
+                    const temps = data.map(entry => entry[0]); // extrahovanie teplôt
+                    const hums = data.map(entry => entry[1]); // extrahovanie vlhkostí
+                    chart.data.labels = labels;
+                    chart.data.datasets[0].data = temps;
+                    chart.data.datasets[1].data = hums;
+                    chart.update(); // prekreslenie grafu
+                });
+        }
+
+        // Aktualizuj graf každú sekundu
+        setInterval(updateChart, 1000);
+
+        // --- Konfigurácia Gauge.js meračov ---
+        const tempGaugeOpts = {
+            angle: 0,
+            lineWidth: 0.3,
+            radiusScale: 1,
+            pointer: {
+                length: 0.6,
+                strokeWidth: 0.035,
+                color: '#000000'
+            },
+            limitMax: false,
+            limitMin: false,
+            colorStart: '#6FADCF',
+            colorStop: '#8FC0DA',
+            strokeColor: '#E0E0E0',
+            highDpiSupport: true
+        };
+
+        // Skopíruj rovnaké nastavenia pre merač vlhkosti
+        const humGaugeOpts = JSON.parse(JSON.stringify(tempGaugeOpts));
+
+        // Inicializácia oboch meračov
+        const tempGauge = new Gauge(document.getElementById("tempGauge")).setOptions(tempGaugeOpts);
+        const humGauge = new Gauge(document.getElementById("humGauge")).setOptions(humGaugeOpts);
+
+        // Nastavenie rozsahov pre merače
+        tempGauge.maxValue = 100;
+        tempGauge.setMinValue(0);
+        tempGauge.animationSpeed = 32;
+        tempGauge.set(0); // začiatočná hodnota
+
+        humGauge.maxValue = 100;
+        humGauge.setMinValue(0);
+        humGauge.animationSpeed = 32;
+        humGauge.set(0); // začiatočná hodnota
+
+        // --- Funkcia pre aktualizáciu hodnôt meračov z posledného merania ---
+        function updateGauges() {
+            fetch('/latest') // získa poslednú hodnotu merania
+                .then(response => response.json())
+                .then(data => {
+                    if (data.temperature !== null) tempGauge.set(data.temperature);
+                    if (data.humidity !== null) humGauge.set(data.humidity);
+                });
+        }
+
+        // Aktualizuj merače každú sekundu
+        setInterval(updateGauges, 1000);
+    </script>
+</body>
+</html>
